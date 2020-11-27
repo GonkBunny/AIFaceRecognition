@@ -1,19 +1,18 @@
-import cv2
-import sys
-import numpy as np
-import os
+from subprocess import Popen
+import argparse
 
-image_path= "Dataset\Gonçalo\GoncaloCoelho.png"
-print(os.path.exists(image_path))
-print(image_path)
+ap = argparse.ArgumentParser()
+ap.add_argument("-c", "--confidence", type=float, default=0.5,
+	help="minimum probability to filter weak detections")
+args = vars(ap.parse_args())
+Dataset = "Dataset"
+recognizer = "Output\recognizer.pickle"
+le = "Output\le.pickle"
+embedding_model = "openface.nn4.small2.v1.t7"
+detector = "face_detection_model"
+embeddings = "Output\embeddings.pickle"
 
 
 
-CV_LOAD_IMAGE_COLOR = 1 # set flag to 1 to give colour image
-CV_LOAD_IMAGE_COLOR = 0 # set flag to 0 to give a grayscale one
-img = cv2.imread(image_path,CV_LOAD_IMAGE_COLOR)
-print(img.shape)
-cv2.namedWindow('Display Window') ## create window for display
-cv2.imshow('Display Window', img) ## Show image in the window
-cv2.waitKey(0) ## Wait for keystroke
-cv2.destroyAllWindows() ## Destroy all windows
+
+

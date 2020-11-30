@@ -94,20 +94,20 @@ y_pool_C = deepcopy(y_pool)
 
 for idx in range(N_QUERIES):
 	try:
-		query_idx, query_inst = committee.query(X)
+		query_idx, query_inst = committee.query(X_pool)
 		print(query_idx)
 		committee.teach(X=X_pool[query_idx],y=y_pool[query_idx])
 		X_pool = np.delete(X_pool, query_idx, axis = 0)
 		y_pool = np.delete(y_pool, query_idx)
 
-		query_idx1, query_inst1 = committee2.query(X)
+		query_idx1, query_inst1 = committee2.query(X_pool_C)
 		print(query_idx1)
 		committee2.teach(X=X_pool_C[query_idx1],y=y_pool_C[query_idx1])
 		X_pool_C = np.delete(X_pool_C, query_idx1, axis = 0)
 		y_pool_C = np.delete(y_pool_C, query_idx1)
 
 
-		query_idx2, query_inst2 = activeLearner.query(X)
+		query_idx2, query_inst2 = activeLearner.query(X_pool_US)
 		print(query_idx2)
 		activeLearner.teach(X=X_pool_US[query_idx2],y=y_pool_US[query_idx2])
 		X_pool_US = np.delete(X_pool_US, query_idx2, axis = 0)

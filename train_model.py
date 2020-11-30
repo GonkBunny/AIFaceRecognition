@@ -18,8 +18,8 @@ from modAL.uncertainty import entropy_sampling
 import numpy as np
 from copy import deepcopy
 import method_entropy
-from method_entropy import vote_uncertain_sampling_entropy
-from modAL.disagreement import vote_entropy_sampling
+from method_entropy import vote_disagreement, vote_uncertain_sampling_entropy
+
 
 ap = argparse.ArgumentParser()
 ap.add_argument("-e", "--embeddings", required=True,
@@ -39,7 +39,7 @@ le = LabelEncoder()
 labels = le.fit_transform(data["names"])
 X = data["embeddings"]
 
-
+np.random.seed(42)
 X_pool = deepcopy(X)
 X_pool = np.asarray(X_pool)
 y_pool = deepcopy(labels)
@@ -70,27 +70,59 @@ for i in Alg_list:
 	)
 	learner_list.append(learner)
 
+		#só um membro apenas Podia usar um elemento do committee, mas pode causar erro
+activeLearner = ActiveLearner(
+			estimator=SVC(C=1,kernel='linear',probability=True),
+			X_training= X_train,y_training=y_train,
+			query_strategy=entropy_sampling
+)
+
 committee = Committee(learner_list=learner_list,
 				query_strategy= vote_uncertain_sampling_entropy
 				)
+				#committee query strategy
+committee2 = Committee(learner_list=learner_list, query_strategy=vote_disagreement)
 y = labels
-N_QUERIES = 40
+N_QUERIES = 10
 i = 0
 minimum_accuracy = 0.6
+
+X_pool_US = deepcopy(X_pool)
+y_pool_US = deepcopy(y_pool)
+X_pool_C = deepcopy(X_pool)
+y_pool_C = deepcopy(y_pool)
 
 for idx in range(N_QUERIES):
 	try:
 		query_idx, query_inst = committee.query(X)
-
+		print(query_idx)
 		committee.teach(X=X_pool[query_idx],y=y_pool[query_idx])
 		X_pool = np.delete(X_pool, query_idx, axis = 0)
 		y_pool = np.delete(y_pool, query_idx)
+
+		query_idx1, query_inst1 = committee2.query(X)
+		print(query_idx1)
+		committee2.teach(X=X_pool_C[query_idx1],y=y_pool_C[query_idx1])
+		X_pool_C = np.delete(X_pool_C, query_idx1, axis = 0)
+		y_pool_C = np.delete(y_pool_C, query_idx1)
+
+
+		query_idx2, query_inst2 = activeLearner.query(X)
+		print(query_idx2)
+		activeLearner.teach(X=X_pool_US[query_idx2],y=y_pool_US[query_idx2])
+		X_pool_US = np.delete(X_pool_US, query_idx2, axis = 0)
+		y_pool_US = np.delete(y_pool_US, query_idx2)
+		print("\n")
+
 	except IndexError:
+		print("It broke")
 		break
 
 
 
 print(committee.score(X_test,y_test))
+print(activeLearner.score(X_test,y_test))
+print(committee2.score(X_test,y_test))
 
 svc = committee.learner_list[0]
 

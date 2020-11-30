@@ -48,15 +48,54 @@ def votes_entropy(committee: BaseCommittee, X: modALinput, **predict_proba_kwarg
             for class_idx,class_label in enumerate(committee.classes_):
                   p_vote[vote_idx,class_idx] = vote_counter[class_label]/n_learners
             entro[vote_idx] = entropy(p_vote[vote_idx])
-
+      print(entro)
       return entro
 
 
 
-def vote_uncertain_sampling_entropy(committee: BaseCommittee, X: modALinput,n_instances: int = 1, r_tie_break=False,**disagreement_measure_kwargs):
+def vote_uncertain_sampling_entropy(committee: BaseCommittee, X: modALinput,n_instances: int = 1, r_tie_break=True,**disagreement_measure_kwargs):
 
 
       disagreement = votes_entropy(committee,X,**disagreement_measure_kwargs)
+
+      if not r_tie_break:
+            query_idx = multi_argmax(disagreement,n_instances=n_instances)
+      else:
+            query_idx = shuffled_argmax(disagreement,n_instances=n_instances)
+      X = np.asarray(X)
+      return query_idx, X[query_idx]
+
+
+def count_votes(array):
+      values,counts = np.unique(array,return_counts=True)
+      print(counts)
+      votes = 0
+      for i in counts:
+            votes += i
+      return votes
+
+def votes(committee: BaseCommittee, X: modALinput, **predict_proba_kwargs):
+      n_learners = len(committee) #ver o número de membros no committee
+      try:
+            votes = committee.vote(X,**predict_proba_kwargs) 
+      except NotFittedError:
+            return np.zeros(shape=(X.shape[0],))
+      X = np.asarray(X)
+
+      p_vote = np.zeros(shape=(X.shape[0], len(committee.classes_)))
+      voter = np.zeros(shape=(X.shape[0],))
+      for vote_idx, vote in enumerate(votes):
+            vote_counter = Counter(vote) #criar dict com o numero de ocorrencias de cada classe
+            
+            for class_idx,class_label in enumerate(committee.classes_):
+                  p_vote[vote_idx,class_idx] = vote_counter[class_label]/n_learners
+            
+            voter[vote_idx] += count_votes(p_vote)
+      return voter
+
+
+def vote_disagreement(committee: BaseCommittee, X: modALinput,n_instances: int = 1, r_tie_break=True,**disagreement_measure_kwargs):
+      disagreement = votes(committee,X,**disagreement_measure_kwargs)
 
       if not r_tie_break:
             query_idx = multi_argmax(disagreement,n_instances=n_instances)

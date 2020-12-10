@@ -8,6 +8,7 @@ from sklearn.gaussian_process.kernels import RBF
 from sklearn.naive_bayes import GaussianNB
 from sklearn.neural_network import MLPClassifier
 from sklearn.model_selection import train_test_split
+from sklearn.metrics import confusion_matrix
 
 import argparse
 import pickle
@@ -15,6 +16,10 @@ from modAL.models import ActiveLearner
 import numpy as np
 from copy import deepcopy
 from method_entropy import vote_disagreement, vote_uncertain_sampling_entropy, random_choice
+
+import seaborn as sn
+import pandas as pd
+import matplotlib.pyplot as plt
 
 
 def get_args():
@@ -26,7 +31,10 @@ def get_args():
     return args
 
 
-def run_iteration(args, file_stats, itera, iterations, verbose=True):
+def run_iteration(args, file_stats, itera, iterations, verbose=True, partition=(0.4, 0.6)):
+    if sum(partition) != 1:
+        print("WRONG PARTITIONING")
+        return
     if verbose:
         print("STARTING ITERATION %d OUT OF %d" % (itera + 1, iterations))
         print("[INFO] loading face embeddings...")
@@ -36,14 +44,8 @@ def run_iteration(args, file_stats, itera, iterations, verbose=True):
         print("[INFO] encoding labels...")
     le = LabelEncoder()
     labels = le.fit_transform(data["names"])
-    x = data["embeddings"]
-
-    # np.random.seed(42)
-    x_pool_us = deepcopy(x)
-    x_pool_us = np.asarray(x_pool_us)
-    y_pool_us = deepcopy(labels)
-    x_train, x_test, y_train, y_test = train_test_split(x_pool_us, y_pool_us, test_size=0.2)  # TODO
-    x_train_labeled, x_train_unlabeled, y_train_labeled, y_train_unlabeled = train_test_split(x_train, y_train, test_size=0.8)  # TODO
+    x = np.asarray(data["embeddings"])
+    x_train_labeled, x_train_unlabeled, y_train_labeled, y_train_unlabeled = train_test_split(x, labels, test_size=partition[1])  # TODO
 
     print("[INFO] training model...")
     """
@@ -69,13 +71,17 @@ def run_iteration(args, file_stats, itera, iterations, verbose=True):
             X_training=x_train_labeled, y_training=y_train_labeled
         )
         learner_list.append(learner)
+        learner.name = str(algo)
 
     learner_list_us = deepcopy(learner_list)
     learner_list_d = deepcopy(learner_list)
     learner_list_r = deepcopy(learner_list)
     committee_us = Committee(learner_list=learner_list_us, query_strategy=vote_uncertain_sampling_entropy)
+    committee_us.name = "vote_uncertain_sampling_entropy"
     committee_d = Committee(learner_list=learner_list_d, query_strategy=vote_disagreement)
+    committee_d.name = "vote_disagreement"
     committee_r = Committee(learner_list=learner_list_r, query_strategy=random_choice)
+    committee_r.name = "random_choice"
 
     solo_learner_x_pools = [deepcopy(x_train_unlabeled) for _ in learner_list]
     solo_learner_y_pools = [deepcopy(y_train_unlabeled) for _ in learner_list]
@@ -85,6 +91,9 @@ def run_iteration(args, file_stats, itera, iterations, verbose=True):
     y_pool_d = deepcopy(y_train_unlabeled)
     x_pool_r = deepcopy(x_train_unlabeled)
     y_pool_r = deepcopy(y_train_unlabeled)
+
+    for learner in itertools.chain([committee_us], [committee_d], [committee_r], learner_list):
+        plot_confusion(learner, x, labels, le, "Before Active Learning %s" % learner.name)
 
     n_queries = len(y_train_unlabeled) // 2
     for idx in range(n_queries):
@@ -119,7 +128,7 @@ def run_iteration(args, file_stats, itera, iterations, verbose=True):
             file_stats.write("%d" % idx)
             for learner in itertools.chain([committee_us], [committee_d], [committee_r], learner_list):
                 try:
-                    score = learner.score(x_test, y_test)
+                    score = learner.score(x, labels)
                 except:
                     score = float("nan")
                 file_stats.write(",%f" % score)
@@ -129,16 +138,34 @@ def run_iteration(args, file_stats, itera, iterations, verbose=True):
             if verbose:
                 print("It broke")
             break
+    for learner in itertools.chain([committee_us], [committee_d], [committee_r], learner_list):
+        plot_confusion(learner, x, labels, le, "After Active Learning %s" % learner.name)
 
 
-def run_experiment(args, iterations=10):
+def plot_confusion(learner, x_test, y_test, le, title):
+    plt.figure()
+    conf_mat = confusion_matrix(y_test, learner.predict(x_test))
+    df_cm = pd.DataFrame(conf_mat, index=[i for i in range(len(conf_mat))], columns=[i for i in range(len(conf_mat))])
+    sn.heatmap(df_cm, annot=True)
+    plt.title(title)
+    locs, labels = plt.xticks()
+    plt.xticks(locs, le.inverse_transform([int(label._text) for label in labels]), rotation=70)
+    locs, labels = plt.yticks()
+    plt.yticks(locs, le.inverse_transform([int(label._text) for label in labels]), rotation=0)
+    title = title.split("(")[0]
+    plt.tight_layout()
+    plt.savefig("plots/%s.png" % title)
+    plt.show()
+
+
+def run_experiment(args, iterations=10, partition=(0.4, 0.6)):
     file_stats = open("iteration_stats.csv", "w")
     file_stats.write("iteration,Uncertainty Sampling Entropy Committee, Voter Disagreement Committee, Random Committee")
     for i in range(1, 7):
         file_stats.write(",Solo Active Learner %d" % i)
     file_stats.write("\n")
     for itera in range(iterations):
-        run_iteration(args, file_stats, itera, iterations)
+        run_iteration(args, file_stats, itera, iterations, partition=partition)
 
     # svc = committee.learner_list[0]
 
@@ -156,7 +183,7 @@ def run_experiment(args, iterations=10):
 def main():
     iterations = 1
     args = get_args()
-    run_experiment(args, iterations)
+    run_experiment(args, iterations, partition=(0.1, 0.9))
 
 
 if __name__ == "__main__":

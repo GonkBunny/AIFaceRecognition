@@ -78,10 +78,10 @@ if __name__ == "__main__":
             X_training=X_train_labeled, y_training=y_train_labeled,
             query_strategy=entropy_sampling
         )
-
+        learner_list2 = deepcopy(learner_list)
         committee = Committee(learner_list=learner_list, query_strategy=vote_uncertain_sampling_entropy)
         # committee query strategy
-        committee2 = Committee(learner_list=learner_list, query_strategy=random_choice)
+        committee2 = Committee(learner_list=learner_list2, query_strategy=vote_disagreement)
         y = labels
         N_QUERIES = len(y_train_unlabeled) // 2
         algo = 0

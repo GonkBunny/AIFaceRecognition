@@ -1,3 +1,4 @@
+from modAL.uncertainty import uncertainty_sampling, entropy_sampling;
 import numpy as np
 from math import log
 from collections import Counter
@@ -70,6 +71,21 @@ def vote_uncertain_sampling_entropy(committee: BaseCommittee, X: modALinput, n_i
         query_idx = shuffled_argmax(disagreement, n_instances=n_instances)
     X = np.asarray(X)
     return query_idx, X[query_idx]
+
+
+def vote_uncertain_sampling_entropy_v2(committee: BaseCommittee, X: modALinput, n_instances: int = 5, r_tie_break=False, **disagreement_measure_kwargs):
+    disagreement = votes_entropy(committee, X, **disagreement_measure_kwargs)
+
+    if not r_tie_break:
+        query_idx = multi_argmax(disagreement, n_instances=n_instances)
+    else:
+        query_idx = shuffled_argmax(disagreement, n_instances=n_instances)
+
+    pos_X_idx,pos_X = query_idx, X[query_idx]
+
+    entropy,_ = entropy_sampling(committee,pos_X,1,False,**disagreement_measure_kwargs)
+    
+    return pos_X_idx[entropy], X[pos_X_idx[entropy]]
 
 
 def votes(committee: BaseCommittee, X: modALinput, **predict_proba_kwargs):

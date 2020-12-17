@@ -1,21 +1,24 @@
 import itertools
+from math import gamma
 from modAL.models.learners import Committee
 from sklearn.preprocessing import LabelEncoder
 from sklearn.svm import SVC
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.gaussian_process import GaussianProcessClassifier
-from sklearn.gaussian_process.kernels import RBF
+from sklearn.gaussian_process.kernels import RBF,Matern,WhiteKernel,ConstantKernel
 from sklearn.naive_bayes import GaussianNB
 from sklearn.neural_network import MLPClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import confusion_matrix
+from sklearn.model_selection import cross_val_score
+from sklearn.model_selection import GridSearchCV
 
 import argparse
 import pickle
 from modAL.models import ActiveLearner
 import numpy as np
 from copy import deepcopy
-from method_entropy import vote_disagreement, vote_uncertain_sampling_entropy, random_choice
+from method_entropy import vote_disagreement, vote_uncertain_sampling_entropy, random_choice, vote_uncertain_sampling_entropy_v2
 
 import seaborn as sn
 import pandas as pd
@@ -48,20 +51,25 @@ def run_iteration(args, file_stats, itera, iterations, verbose=True, partition=(
     x_train_labeled, x_train_unlabeled, y_train_labeled, y_train_unlabeled = train_test_split(x, labels, test_size=partition[1])  # TODO
 
     print("[INFO] training model...")
-    """
-    param_grid = {'C': [0.1,1, 10, 100], 'gamma': [1,0.1,0.01,0.001],'kernel': ['linear','rbf', 'poly', 'sigmoid'],'probability': [True]}
-
-    grid = GridSearchCV(SVC(),param_grid,refit=True,verbose=2)
+    
+    param_grid = {'C': [0.1,1, 10, 100,1000,10000], 'gamma': [1,0.1,0.01,0.001],'kernel': ['linear', 'poly','rbf', 'sigmoid'],'probability': [True]}
+    params_NB = {'var_smoothing': np.logspace(0,-9, num=100)}
+    grid = GridSearchCV(SVC(),param_grid,refit=True,verbose=1,scoring='accuracy')
     grid.fit(data["embeddings"], labels)
-    """
-    kernel = 1.0 * RBF(1.0)
-    alg_list = [SVC(C=1, kernel='linear', probability=True),
+    print("%s",grid.best_params_)
+    kernel = 1**2 + Matern(length_scale=2, nu=1.5) + WhiteKernel(noise_level=1)
+   
+    alg_list = [SVC(C=1, gamma = 1,kernel='poly', probability=True),
                 RandomForestClassifier(),
-                SVC(C=2, probability=True),
+                SVC(C=1,gamma = 1, kernel = 'rbf',probability=True),
                 GaussianProcessClassifier(kernel=kernel),
-                GaussianNB(),
-                MLPClassifier(alpha=0.01, max_iter=1000),
+                GaussianNB(var_smoothing= 0.008111308307896872),
+                MLPClassifier(alpha=0.001, max_iter=10000),
                 ]
+    b = deepcopy(alg_list)
+    for i in b:
+        scores = cross_val_score(i,x,labels)
+        print("Accuracy: %0.2f (+/- %0.2f)" % (scores.mean(), scores.std() * 2))
 
     learner_list = list()
 
@@ -76,12 +84,17 @@ def run_iteration(args, file_stats, itera, iterations, verbose=True, partition=(
     learner_list_us = deepcopy(learner_list)
     learner_list_d = deepcopy(learner_list)
     learner_list_r = deepcopy(learner_list)
+    learner_list_v2 = deepcopy(learner_list)
     committee_us = Committee(learner_list=learner_list_us, query_strategy=vote_uncertain_sampling_entropy)
     committee_us.name = "vote_uncertain_sampling_entropy"
     committee_d = Committee(learner_list=learner_list_d, query_strategy=vote_disagreement)
     committee_d.name = "vote_disagreement"
     committee_r = Committee(learner_list=learner_list_r, query_strategy=random_choice)
     committee_r.name = "random_choice"
+    committee_v2 = Committee(learner_list=learner_list_v2, query_strategy=vote_uncertain_sampling_entropy_v2)
+    committee_v2.name = "vote_uncertain_sampling_entropy_v2"
+
+
 
     solo_learner_x_pools = [deepcopy(x_train_unlabeled) for _ in learner_list]
     solo_learner_y_pools = [deepcopy(y_train_unlabeled) for _ in learner_list]
@@ -91,8 +104,10 @@ def run_iteration(args, file_stats, itera, iterations, verbose=True, partition=(
     y_pool_d = deepcopy(y_train_unlabeled)
     x_pool_r = deepcopy(x_train_unlabeled)
     y_pool_r = deepcopy(y_train_unlabeled)
+    x_pool_v2 = deepcopy(x_train_unlabeled)
+    y_pool_v2 = deepcopy(y_train_unlabeled)
 
-    for learner in itertools.chain([committee_us], [committee_d], [committee_r], learner_list):
+    for learner in itertools.chain([committee_v2],[committee_us], [committee_d], [committee_r], learner_list):
         plot_confusion(learner, x, labels, le, "Before Active Learning %s" % learner.name)
 
     n_queries = len(y_train_unlabeled) // 2
@@ -118,6 +133,12 @@ def run_iteration(args, file_stats, itera, iterations, verbose=True, partition=(
             x_pool_r = np.delete(x_pool_d, query_idx2, axis=0)
             y_pool_r = np.delete(y_pool_r, query_idx2)
 
+            #COMMITTEE 4
+            query_idx3, query_inst3 = committee_v2.query(x_pool_v2)
+            committee_v2.teach(X=x_pool_v2[query_idx3], y=y_pool_v2[query_idx3])
+            x_pool_v2 = np.delete(x_pool_v2, query_idx3, axis=0)
+            y_pool_v2 = np.delete(y_pool_v2, query_idx3)
+
             # ACTIVE LEARNERS
             for i in range(len(learner_list)):
                 query_idx2, query_inst2 = learner_list[i].query(solo_learner_x_pools[i])
@@ -126,7 +147,7 @@ def run_iteration(args, file_stats, itera, iterations, verbose=True, partition=(
                 solo_learner_y_pools[i] = np.delete(solo_learner_y_pools[i], query_idx2)
 
             file_stats.write("%d" % idx)
-            for learner in itertools.chain([committee_us], [committee_d], [committee_r], learner_list):
+            for learner in itertools.chain([committee_v2],[committee_us], [committee_d], [committee_r], learner_list):
                 try:
                     score = learner.score(x, labels)
                 except:
@@ -138,8 +159,16 @@ def run_iteration(args, file_stats, itera, iterations, verbose=True, partition=(
             if verbose:
                 print("It broke")
             break
-    for learner in itertools.chain([committee_us], [committee_d], [committee_r], learner_list):
+    for learner in itertools.chain([committee_v2],[committee_us], [committee_d], [committee_r], learner_list):
         plot_confusion(learner, x, labels, le, "After Active Learning %s" % learner.name)
+
+    f = open(args["recognizer"], "wb")
+    f.write(pickle.dumps(committee_v2))
+    f.close()
+    
+    f = open(args["le"], "wb")
+    f.write(pickle.dumps(le))
+    f.close()
 
 
 def plot_confusion(learner, x_test, y_test, le, title):
@@ -160,7 +189,7 @@ def plot_confusion(learner, x_test, y_test, le, title):
 
 def run_experiment(args, iterations=10, partition=(0.4, 0.6)):
     file_stats = open("iteration_stats.csv", "w")
-    file_stats.write("iteration,Uncertainty Sampling Entropy Committee, Voter Disagreement Committee, Random Committee")
+    file_stats.write("iteration,Entropy Committee with Uncertainty Sampling, Voter Entropy Committee,Voter Disagreement Committee, Random Committee")
     for i in range(1, 7):
         file_stats.write(",Solo Active Learner %d" % i)
     file_stats.write("\n")
@@ -169,13 +198,7 @@ def run_experiment(args, iterations=10, partition=(0.4, 0.6)):
 
     # svc = committee.learner_list[0]
 
-    # f = open(args["recognizer"], "wb")
-    # f.write(pickle.dumps(committee))
-    # f.close()
-    #
-    # f = open(args["le"], "wb")
-    # f.write(pickle.dumps(le))
-    # f.close()
+    
 
     file_stats.close()
 

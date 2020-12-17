@@ -42,4 +42,4 @@ def main(clear=False, clear_only=False, n_new_images=32):
 
 
 if __name__ == "__main__":
-    main(clear=True, n_new_images=35)
+    main(clear=True, n_new_images=20)

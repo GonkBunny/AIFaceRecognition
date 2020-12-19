@@ -1,6 +1,9 @@
 import itertools
+import random as rd
 from math import gamma
+import os
 from modAL.models.learners import Committee
+from scipy.sparse.construct import random
 from sklearn.preprocessing import LabelEncoder
 from sklearn.svm import SVC
 from sklearn.ensemble import RandomForestClassifier
@@ -9,10 +12,10 @@ from sklearn.gaussian_process.kernels import RBF,Matern,WhiteKernel,ConstantKern
 from sklearn.naive_bayes import GaussianNB
 from sklearn.neural_network import MLPClassifier
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import confusion_matrix
+from sklearn.metrics import confusion_matrix, roc_curve
 from sklearn.model_selection import cross_val_score
 from sklearn.model_selection import GridSearchCV
-
+from sklearn.multiclass import OneVsRestClassifier
 import argparse
 import pickle
 from modAL.models import ActiveLearner
@@ -24,7 +27,7 @@ import seaborn as sn
 import pandas as pd
 import matplotlib.pyplot as plt
 
-
+seed_value = 42
 def get_args():
     ap = argparse.ArgumentParser()
     ap.add_argument("-e", "--embeddings", required=True, help="path to serialized db of facial embeddings")
@@ -48,29 +51,34 @@ def run_iteration(args, file_stats, itera, iterations, verbose=True, partition=(
     le = LabelEncoder()
     labels = le.fit_transform(data["names"])
     x = np.asarray(data["embeddings"])
-    x_train_labeled, x_train_unlabeled, y_train_labeled, y_train_unlabeled = train_test_split(x, labels, test_size=partition[1])  # TODO
+    x_train,x_test,y_train,y_test = train_test_split(x,labels, test_size=0.2) 
+    x_train_labeled, x_train_unlabeled, y_train_labeled, y_train_unlabeled = train_test_split(x_train, y_train, test_size=partition[1])  # TODO
 
     print("[INFO] training model...")
-    
+    """
     param_grid = {'C': [0.1,1, 10, 100,1000,10000], 'gamma': [1,0.1,0.01,0.001],'kernel': ['linear', 'poly','rbf', 'sigmoid'],'probability': [True]}
     params_NB = {'var_smoothing': np.logspace(0,-9, num=100)}
     grid = GridSearchCV(SVC(),param_grid,refit=True,verbose=1,scoring='accuracy')
     grid.fit(data["embeddings"], labels)
     print("%s",grid.best_params_)
+    """
+    
     kernel = 1**2 + Matern(length_scale=2, nu=1.5) + WhiteKernel(noise_level=1)
-   
-    alg_list = [SVC(C=1, gamma = 1,kernel='poly', probability=True),
-                RandomForestClassifier(),
-                SVC(C=1,gamma = 1, kernel = 'rbf',probability=True),
-                GaussianProcessClassifier(kernel=kernel),
-                GaussianNB(var_smoothing= 0.008111308307896872),
-                MLPClassifier(alpha=0.001, max_iter=10000),
+    
+    alg_list = [OneVsRestClassifier( SVC(C=1, gamma = 1,kernel='poly', probability=True,random_state = 42)),
+                OneVsRestClassifier( RandomForestClassifier(random_state = 42)),
+                OneVsRestClassifier( SVC(C=1,gamma = 1, kernel = 'rbf',probability=True,random_state = 42)),
+                OneVsRestClassifier( GaussianProcessClassifier(kernel=kernel,random_state = 42)),
+                OneVsRestClassifier( GaussianNB(var_smoothing= 0.008111308307896872)),
+                OneVsRestClassifier( MLPClassifier(alpha=0.001, max_iter=10000,random_state = 42))
                 ]
+
     b = deepcopy(alg_list)
+    """
     for i in b:
         scores = cross_val_score(i,x,labels)
         print("Accuracy: %0.2f (+/- %0.2f)" % (scores.mean(), scores.std() * 2))
-
+"""
     learner_list = list()
 
     for i, algo in enumerate(alg_list):
@@ -108,9 +116,9 @@ def run_iteration(args, file_stats, itera, iterations, verbose=True, partition=(
     y_pool_v2 = deepcopy(y_train_unlabeled)
 
     for learner in itertools.chain([committee_v2],[committee_us], [committee_d], [committee_r], learner_list):
-        plot_confusion(learner, x, labels, le, "Before Active Learning %s" % learner.name)
+        plot_confusion(learner, x_test, y_test, le, "Before Active Learning %s" % learner.name)
 
-    n_queries = len(y_train_unlabeled) // 2
+    n_queries = len(y_train_unlabeled) // 4 
     for idx in range(n_queries):
         if verbose:
             print("Executing query %d/%d\n" % (idx + 1, n_queries))
@@ -149,7 +157,7 @@ def run_iteration(args, file_stats, itera, iterations, verbose=True, partition=(
             file_stats.write("%d" % idx)
             for learner in itertools.chain([committee_v2],[committee_us], [committee_d], [committee_r], learner_list):
                 try:
-                    score = learner.score(x, labels)
+                    score = learner.score(x_test, y_test)
                 except:
                     score = float("nan")
                 file_stats.write(",%f" % score)
@@ -160,7 +168,27 @@ def run_iteration(args, file_stats, itera, iterations, verbose=True, partition=(
                 print("It broke")
             break
     for learner in itertools.chain([committee_v2],[committee_us], [committee_d], [committee_r], learner_list):
-        plot_confusion(learner, x, labels, le, "After Active Learning %s" % learner.name)
+        plot_confusion(learner, x_test, y_test, le, "After Active Learning %s" % learner.name)
+
+
+
+    def evaluation():
+        evaluation_list = [committee_v2,committee_us, committee_d, committee_r, learner_list]
+        for i in evaluation_list:
+            y_pred = i.predict_proba(x_test)[:,1]
+            fpr,tpr = roc_curve(y_test,y_pred)
+            plt.figure(1)
+            plt.plot([0,1],[0,1],'k--')
+            plt.plot(fpr,tpr)
+            
+        plt.xlabel('False positive')
+        plt.ylabel('True positive')
+        plt.title('ROC curve')
+        plt.title(loc='best')
+        plt.show()
+
+    evaluation()
+
 
     f = open(args["recognizer"], "wb")
     f.write(pickle.dumps(committee_v2))
@@ -169,6 +197,7 @@ def run_iteration(args, file_stats, itera, iterations, verbose=True, partition=(
     f = open(args["le"], "wb")
     f.write(pickle.dumps(le))
     f.close()
+    
 
 
 def plot_confusion(learner, x_test, y_test, le, title):
@@ -185,6 +214,8 @@ def plot_confusion(learner, x_test, y_test, le, title):
     plt.tight_layout()
     plt.savefig("plots/%s.png" % title)
     plt.show()
+
+
 
 
 def run_experiment(args, iterations=10, partition=(0.4, 0.6)):
@@ -210,4 +241,9 @@ def main():
 
 
 if __name__ == "__main__":
+    
+    os.environ['PYTHONHASHSEED'] = str(seed_value)
+
+    rd.seed(seed_value)
+    np.random.seed(seed_value)
     main()

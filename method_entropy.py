@@ -76,6 +76,8 @@ def vote_uncertain_sampling_entropy(committee: BaseCommittee, X: modALinput, n_i
 def vote_uncertain_sampling_entropy_v2(committee: BaseCommittee, X: modALinput, n_instances: int = 5, r_tie_break=False, **disagreement_measure_kwargs):
     disagreement = votes_entropy(committee, X, **disagreement_measure_kwargs)
 
+    if len(X) < n_instances:
+        n_instances = len(X)
     if not r_tie_break:
         query_idx = multi_argmax(disagreement, n_instances=n_instances)
     else:
@@ -84,7 +86,7 @@ def vote_uncertain_sampling_entropy_v2(committee: BaseCommittee, X: modALinput, 
     pos_X_idx,pos_X = query_idx, X[query_idx]
 
     entropy,_ = entropy_sampling(committee,pos_X,1,False,**disagreement_measure_kwargs)
-    
+
     return pos_X_idx[entropy], X[pos_X_idx[entropy]]
 
 

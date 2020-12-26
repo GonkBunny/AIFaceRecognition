@@ -2,6 +2,7 @@ import argparse
 import os
 from copy import deepcopy
 from math import ceil
+import matplotlib.pyplot as plt
 
 import numpy as np
 import pandas
@@ -126,15 +127,21 @@ def calculate_integrals(data, learner):
         integrals = {k: list(v) for k, v in integrals.items()}
     except:
         integrals = {
-            "10": [],
-            "25": [],
-            "50": [],
-            "100": []
+            "First 10": [],
+            "First 25": [],
+            "First 50": [],
+            "100": [],
+            "Last 10": [],
+            "Last 25": [],
+            "Last 50": [],
         }
-    integrals["10"].append(sum(data["Difference"][0:ceil(len(data["Difference"]) / 10)]))
-    integrals["25"].append(sum(data["Difference"][0:ceil(len(data["Difference"]) / 4)]))
-    integrals["50"].append(sum(data["Difference"][0:ceil(len(data["Difference"]) / 2)]))
+    integrals["First 10"].append(sum(data["Difference"][0:ceil(len(data["Difference"]) / 10)]))
+    integrals["First 25"].append(sum(data["Difference"][0:ceil(len(data["Difference"]) / 4)]))
+    integrals["First 50"].append(sum(data["Difference"][0:ceil(len(data["Difference"]) / 2)]))
     integrals["100"].append(sum(data["Difference"][:]))
+    integrals["Last 10"].append(sum(data["Difference"][len(data["Difference"]) - ceil(len(data["Difference"]) / 10):]))
+    integrals["Last 25"].append(sum(data["Difference"][len(data["Difference"]) - ceil(len(data["Difference"]) / 4):]))
+    integrals["Last 50"].append(sum(data["Difference"][len(data["Difference"]) - ceil(len(data["Difference"]) / 2):]))
     integrals.pop('Unnamed: 0', None)
     integrals = pandas.DataFrame(integrals)
     integrals.to_csv("experiment1-integrals-%s.csv" % learner.name)
@@ -142,11 +149,14 @@ def calculate_integrals(data, learner):
 
 def experiment(x_train, y_train, x_test, y_test, learners):
     for iteration in range(30):
+        # break
         print("----------------------------------------------------------")
         print("Running iteration %d of 30" % (iteration + 1))
         print("----------------------------------------------------------")
         new_learners = deepcopy(learners)
         for learner in new_learners:
+            if learner.name == 'GaussianPC' or learner.name == 'GaussianNB':
+                continue
             print("Executing experiment on learner %s" % learner.name)
             try:
                 print("Loading data...")
@@ -168,11 +178,37 @@ def experiment(x_train, y_train, x_test, y_test, learners):
                 data.to_csv("experiment1-%s-%d.csv" % (learner.name, iteration))
                 print("Loading data...")  # for some reason this fucks up if it's not loaded from the csv
                 data = pandas.read_csv("experiment1-%s-%d.csv" % (learner.name, iteration))
-            plot_evolution(data)
-            plot_evolution_trend(data)
-            plot_evolution_speed_trend(data)
-            plot_best_iteration(data)
+            # plot_evolution(data)
+            # plot_evolution_trend(data)
+            # plot_evolution_speed_trend(data)
+            # plot_best_iteration(data)
             calculate_integrals(data, learner)
+    conclusions()
+
+
+def conclusions():
+    for stat in ["First 10", "First 25", "First 50", "100", "Last 10", "Last 25", "Last 50"]:
+        x = []
+        y = []
+        fig = plt.figure()
+        for file in os.listdir():
+            parts = file.split("-")
+            if parts[1] == "integrals":
+                integrals = pandas.read_csv(file)
+                integrals = dict(integrals)
+                integrals = {k: list(v) for k, v in integrals.items()}
+                x.append(insert_newlines(parts[-1].split(".")[0], every=16))
+                y.append(integrals[stat])
+        plt.title("Integral of Active and Passive Learning\nQuality Difference Over\n%s%% Iterations" % stat)
+        plt.boxplot(y)
+        plt.xticks([i + 1 for i, _ in enumerate(x)], x, rotation=90)
+
+        plt.tight_layout()
+        plt.show()
+
+
+def insert_newlines(string, every=64):
+    return '\n'.join(string[i:i + every] for i in range(0, len(string), every))
 
 
 if __name__ == "__main__":

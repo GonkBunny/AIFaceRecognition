@@ -42,12 +42,11 @@ def get_args():
     return args
 
 
-def run_iteration(args, file_stats, itera, iterations, verbose=True, partition=(0.4, 0.6)):
+def run_active_learning(args, al_iterations, verbose=False, partition=(0.4, 0.6), do_plots=False, do_evaluation=False):
     if sum(partition) != 1:
         print("WRONG PARTITIONING")
         return
     if verbose:
-        print("STARTING ITERATION %d OUT OF %d" % (itera + 1, iterations))
         print("[INFO] loading face embeddings...")
     data = pickle.loads(open(args["embeddings"], "rb").read())
     # encode the labels
@@ -78,7 +77,6 @@ def run_iteration(args, file_stats, itera, iterations, verbose=True, partition=(
                 MLPClassifier(alpha=0.001, max_iter=10000, random_state=42)
                 ]
 
-    b = deepcopy(alg_list)
     """
     for i in b:
         scores = cross_val_score(i,x,labels)
@@ -108,8 +106,12 @@ def run_iteration(args, file_stats, itera, iterations, verbose=True, partition=(
     committee_v2.name = "vote_uncertain_sampling_entropy_v2"
 
     evaluation_list = deepcopy([committee_v2, committee_us, committee_d, committee_r] + learner_list)
-    # evaluation_list = deepcopy(alg_list)
-    # evaluation_list = deepcopy(learner_list)
+    al_iterations["iteration"] = []
+    for learner in evaluation_list:
+        al_iterations[learner.name] = []
+
+    evaluation_list = deepcopy(alg_list)
+    evaluation_list = deepcopy(learner_list)
 
     def evaluation():
 
@@ -156,7 +158,8 @@ def run_iteration(args, file_stats, itera, iterations, verbose=True, partition=(
             plt.savefig('plots/Precision_Recall_%s.png' % str(algo).split("(")[0])
             plt.show()
 
-    evaluation()
+    if do_evaluation:
+        evaluation()
 
     solo_learner_x_pools = [deepcopy(x_train_unlabeled) for _ in learner_list]
     solo_learner_y_pools = [deepcopy(y_train_unlabeled) for _ in learner_list]
@@ -168,9 +171,9 @@ def run_iteration(args, file_stats, itera, iterations, verbose=True, partition=(
     y_pool_r = deepcopy(y_train_unlabeled)
     x_pool_v2 = deepcopy(x_train_unlabeled)
     y_pool_v2 = deepcopy(y_train_unlabeled)
-
-    for learner in itertools.chain([committee_v2], [committee_us], [committee_d], [committee_r], learner_list):
-        plot_confusion(learner, x_test, y_test, le, "Before Active Learning %s" % learner.name)
+    if do_plots:
+        for learner in itertools.chain([committee_v2], [committee_us], [committee_d], [committee_r], learner_list):
+            plot_confusion(learner, x_test, y_test, le, "Before Active Learning %s" % learner.name)
 
     n_queries = len(y_train_unlabeled)
     for idx in range(n_queries):
@@ -208,21 +211,20 @@ def run_iteration(args, file_stats, itera, iterations, verbose=True, partition=(
                 solo_learner_x_pools[i] = np.delete(solo_learner_x_pools[i], query_idx2, axis=0)
                 solo_learner_y_pools[i] = np.delete(solo_learner_y_pools[i], query_idx2)
 
-            file_stats.write("%d" % idx)
+            al_iterations["iteration"].append(idx)
             for learner in itertools.chain([committee_v2], [committee_us], [committee_d], [committee_r], learner_list):
                 try:
                     score = learner.score(x_test, y_test)
                 except:
                     score = float("nan")
-                file_stats.write(",%f" % score)
-            file_stats.write("\n")
-            file_stats.flush()
+                al_iterations[learner.name].append(score)
         except IndexError:
             if verbose:
                 print("It broke")
             break
-    for learner in itertools.chain([committee_v2], [committee_us], [committee_d], [committee_r], learner_list):
-        plot_confusion(learner, x_test, y_test, le, "After Active Learning %s" % learner.name)
+    if do_plots:
+        for learner in itertools.chain([committee_v2], [committee_us], [committee_d], [committee_r], learner_list):
+            plot_confusion(learner, x_test, y_test, le, "After Active Learning %s" % learner.name)
 
     f = open(args["recognizer"], "wb")
     f.write(pickle.dumps(committee_v2))
@@ -231,6 +233,114 @@ def run_iteration(args, file_stats, itera, iterations, verbose=True, partition=(
     f = open(args["le"], "wb")
     f.write(pickle.dumps(le))
     f.close()
+
+
+def run_passive_learning(args, pl_iterations, verbose=False, partition=(0.4, 0.6), do_plots=False, do_evaluation=False):
+    if sum(partition) != 1:
+        print("WRONG PARTITIONING")
+        return
+    if verbose:
+        print("[INFO] loading face embeddings...")
+    data = pickle.loads(open(args["embeddings"], "rb").read())
+    # encode the labels
+    if verbose:
+        print("[INFO] encoding labels...")
+    le = LabelEncoder()
+    labels = le.fit_transform(data["names"])
+    x = np.asarray(data["embeddings"])
+    x_train, x_test, y_train, y_test = train_test_split(x, labels, test_size=0.2, random_state=42)
+    x_train_labeled, x_train_unlabeled, y_train_labeled, y_train_unlabeled = train_test_split(x_train, y_train, test_size=partition[1], random_state=42)  # TODO
+
+    print("[INFO] training model...")
+    """
+    param_grid = {'C': [0.1,1, 10, 100,1000,10000], 'gamma': [1,0.1,0.01,0.001],'kernel': ['linear', 'poly','rbf', 'sigmoid'],'probability': [True]}
+    params_NB = {'var_smoothing': np.logspace(0,-9, num=100)}
+    grid = GridSearchCV(SVC(),param_grid,refit=True,verbose=1,scoring='accuracy')
+    grid.fit(data["embeddings"], labels)
+    print("%s",grid.best_params_)
+    """
+
+    kernel = 1 ** 2 + Matern(length_scale=2, nu=1.5) + WhiteKernel(noise_level=1)
+
+    alg_list = [SVC(C=1, gamma=1, kernel='poly', probability=True, random_state=42),
+                RandomForestClassifier(random_state=42),
+                SVC(C=1, gamma=1, kernel='rbf', probability=True, random_state=42),
+                GaussianProcessClassifier(kernel=kernel, random_state=42),
+                GaussianNB(var_smoothing=0.008111308307896872),
+                MLPClassifier(alpha=0.001, max_iter=10000, random_state=42)
+                ]
+
+    """
+    for i in b:
+        scores = cross_val_score(i,x,labels)
+        print("Accuracy: %0.2f (+/- %0.2f)" % (scores.mean(), scores.std() * 2))
+    """
+    learner_list = list()
+    for i, algo in enumerate(alg_list):
+        learner = ActiveLearner(
+            estimator=algo,
+            X_training=x_train_labeled, y_training=y_train_labeled
+        )
+        learner_list.append(learner)
+        learner.name = str(algo)
+
+    learner_list_us = deepcopy(learner_list)
+    learner_list_d = deepcopy(learner_list)
+    learner_list_r = deepcopy(learner_list)
+    learner_list_v2 = deepcopy(learner_list)
+    committee_us = ModifiedCommittee(learner_list=learner_list_us, query_strategy=vote_uncertain_sampling_entropy)
+    committee_us.name = "vote_uncertain_sampling_entropy"
+    committee_d = ModifiedCommittee(learner_list=learner_list_d, query_strategy=vote_disagreement)
+    committee_d.name = "vote_disagreement"
+    committee_r = ModifiedCommittee(learner_list=learner_list_r, query_strategy=random_choice)
+    committee_r.name = "random_choice"
+    committee_v2 = ModifiedCommittee(learner_list=learner_list_v2, query_strategy=vote_uncertain_sampling_entropy_v2)
+    committee_v2.name = "vote_uncertain_sampling_entropy_v2"
+
+    evaluation_list = deepcopy([committee_v2, committee_us, committee_d, committee_r] + learner_list)
+    pl_iterations["iteration"] = []
+    for learner in evaluation_list:
+        pl_iterations[learner.name] = []
+
+    if do_plots:
+        for learner in itertools.chain([committee_v2], [committee_us], [committee_d], [committee_r], learner_list):
+            plot_confusion(learner, x_test, y_test, le, "Before Active Learning %s" % learner.name)
+
+    n_queries = len(y_train_unlabeled)
+    for idx, query in enumerate(y_train_unlabeled):
+        if verbose:
+            print("Executing query %d/%d\n" % (idx + 1, n_queries))
+        try:
+            # COMMITTEE 1
+            committee_us.teach(X=x_train_unlabeled[[idx]], y=[query])
+
+            # COMMITTEE 2
+            committee_d.teach(X=x_train_unlabeled[[idx]], y=[query])
+
+            # COMMITTEE 3
+            committee_r.teach(X=x_train_unlabeled[[idx]], y=[query])
+
+            # COMMITTEE 4
+            committee_v2.teach(X=x_train_unlabeled[[idx]], y=[query])
+
+            # ACTIVE LEARNERS
+            for i in range(len(learner_list)):
+                learner_list[i].teach(X=x_train_unlabeled[[idx]], y=[query])
+
+            pl_iterations["iteration"].append(idx)
+            for learner in itertools.chain([committee_v2], [committee_us], [committee_d], [committee_r], learner_list):
+                try:
+                    score = learner.score(x_test, y_test)
+                except:
+                    score = float("nan")
+                pl_iterations[learner.name].append(score)
+        except IndexError:
+            if verbose:
+                print("It broke")
+            break
+    if do_plots:
+        for learner in itertools.chain([committee_v2], [committee_us], [committee_d], [committee_r], learner_list):
+            plot_confusion(learner, x_test, y_test, le, "After Active Learning %s" % learner.name)
 
 
 def plot_confusion(learner, x_test, y_test, le, title):
@@ -249,24 +359,21 @@ def plot_confusion(learner, x_test, y_test, le, title):
     plt.show()
 
 
-def run_experiment(args, iterations=10, partition=(0.4, 0.6)):
-    file_stats = open("iteration_stats.csv", "w")
-    file_stats.write("iteration,Entropy Committee with Uncertainty Sampling, Voter Entropy Committee,Voter Disagreement Committee, Random Committee")
-    for i in range(1, 7):
-        file_stats.write(",Solo Active Learner %d" % i)
-    file_stats.write("\n")
-    for itera in range(iterations):
-        run_iteration(args, file_stats, itera, iterations, partition=partition)
+def run_experiment(args, partition=(0.4, 0.6)):
+    al_iterations = {}
+    run_active_learning(args, al_iterations, partition=partition, verbose=True)
+    al_df = pd.DataFrame(al_iterations)
+    al_df.to_csv("active_learning_iterations.csv")
 
-    # svc = committee.learner_list[0]
-
-    file_stats.close()
+    # pl_iterations = {}
+    # run_passive_learning(args, pl_iterations, partition=partition, verbose=True)
+    # pl_df = pd.DataFrame(pl_iterations)
+    # pl_df.to_csv("passive_learning_iterations.csv")
 
 
 def main():
-    iterations = 1
     args = get_args()
-    run_experiment(args, iterations, partition=(0.1, 0.9))
+    run_experiment(args, partition=(0.1, 0.9))
 
 
 if __name__ == "__main__":

@@ -8,6 +8,7 @@ import numpy as np
 import pandas
 from modAL import ActiveLearner
 from pandas import Series
+from scipy.stats import shapiro, ttest_ind, bartlett, kstest
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.gaussian_process import GaussianProcessClassifier
 from sklearn.gaussian_process.kernels import Matern, WhiteKernel
@@ -18,10 +19,14 @@ from sklearn.naive_bayes import GaussianNB
 from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import LabelEncoder
 from sklearn.svm import SVC
+from statsmodels.formula.api import ols
+from statsmodels.graphics.factorplots import interaction_plot
+from statsmodels.stats.anova import anova_lm
 
 from ModifiedCommittee import ModifiedCommittee
 from method_entropy import vote_uncertain_sampling_entropy, vote_disagreement, random_choice, vote_uncertain_sampling_entropy_v2
 from plot_stats import plot_evolution, plot_evolution_trend, plot_evolution_speed_trend, plot_best_iteration
+from termcolor import colored
 
 '''
 This script shall be used to perform an experiment where for each algorithm we perform both active and passive learning and compare the algorithm progression
@@ -135,13 +140,13 @@ def calculate_integrals(data, learner):
             "Last 25": [],
             "Last 50": [],
         }
-    integrals["First 10"].append(sum(data["Difference"][0:ceil(len(data["Difference"]) / 10)]))
-    integrals["First 25"].append(sum(data["Difference"][0:ceil(len(data["Difference"]) / 4)]))
-    integrals["First 50"].append(sum(data["Difference"][0:ceil(len(data["Difference"]) / 2)]))
-    integrals["100"].append(sum(data["Difference"][:]))
-    integrals["Last 10"].append(sum(data["Difference"][len(data["Difference"]) - ceil(len(data["Difference"]) / 10):]))
-    integrals["Last 25"].append(sum(data["Difference"][len(data["Difference"]) - ceil(len(data["Difference"]) / 4):]))
-    integrals["Last 50"].append(sum(data["Difference"][len(data["Difference"]) - ceil(len(data["Difference"]) / 2):]))
+    integrals["First 10"].append(sum(data["Difference"][0:ceil(len(data["Difference"]) / 10)]) / 10)
+    integrals["First 25"].append(sum(data["Difference"][0:ceil(len(data["Difference"]) / 4)]) / 25)
+    integrals["First 50"].append(sum(data["Difference"][0:ceil(len(data["Difference"]) / 2)]) / 50)
+    integrals["100"].append(sum(data["Difference"][:]) / 100)
+    integrals["Last 10"].append(sum(data["Difference"][len(data["Difference"]) - ceil(len(data["Difference"]) / 10):]) / 10)
+    integrals["Last 25"].append(sum(data["Difference"][len(data["Difference"]) - ceil(len(data["Difference"]) / 4):]) / 25)
+    integrals["Last 50"].append(sum(data["Difference"][len(data["Difference"]) - ceil(len(data["Difference"]) / 2):]) / 50)
     integrals.pop('Unnamed: 0', None)
     integrals = pandas.DataFrame(integrals)
     integrals.to_csv("experiment1-integrals-%s.csv" % learner.name)
@@ -149,7 +154,7 @@ def calculate_integrals(data, learner):
 
 def experiment(x_train, y_train, x_test, y_test, learners):
     for iteration in range(30):
-        # break
+        break  # TODO comment this out
         print("----------------------------------------------------------")
         print("Running iteration %d of 30" % (iteration + 1))
         print("----------------------------------------------------------")
@@ -187,7 +192,9 @@ def experiment(x_train, y_train, x_test, y_test, learners):
 
 
 def conclusions():
-    for stat in ["First 10", "First 25", "First 50", "100", "Last 10", "Last 25", "Last 50"]:
+    # PLOTS
+    two_way_anova("Section", "Integral_of_Differences")
+    for stat in ["First 25", "First 50", "Last 25", "Last 50", "100"]:
         x = []
         y = []
         fig = plt.figure()
@@ -199,12 +206,198 @@ def conclusions():
                 integrals = {k: list(v) for k, v in integrals.items()}
                 x.append(insert_newlines(parts[-1].split(".")[0], every=16))
                 y.append(integrals[stat])
-        plt.title("Integral of Active and Passive Learning\nQuality Difference Over\n%s%% Iterations" % stat)
+        plt.title("Active and Passive Learning\n Mean Quality Difference\nOver %s%% Iterations" % stat)
         plt.boxplot(y)
         plt.xticks([i + 1 for i, _ in enumerate(x)], x, rotation=90)
-
         plt.tight_layout()
         plt.show()
+
+    # STATISTICAL TESTS
+    check_if_better_evolution_on_initial_iterations()
+    check_if_better_evolution_than_random_choice()
+
+
+def check_if_better_evolution_than_random_choice():
+    print("check_if_better_evolution_than_random_choice")
+    random_learner_csv = pandas.read_csv("experiment1-integrals-random_choice.csv")
+    baseline = random_learner_csv["100"]
+    if not my_shapiro(baseline):
+        colored_text = colored("Failed to perform test", 'yellow')
+        print(colored_text)
+    else:
+        for file in os.listdir():
+            parts = file.split("-")
+            if parts[1] == "integrals":
+                learner_name = parts[-1].split(".")[0]
+                if learner_name == "random_choice":
+                    continue
+                csv = pandas.read_csv(file)
+                colored_text = colored("Testing if first learning was better than random choice for learner: %s" % learner_name, 'blue')
+                print(colored_text)
+                if not my_shapiro(csv["100"]):
+                    colored_text = colored("Failed to perform test", 'yellow')
+                    print(colored_text)
+                else:
+                    if t_test(csv["100"], baseline, alternative='greater', equal_var=my_bartlett(csv["100"], baseline)):
+                        print("H0 is retained")
+                    else:
+                        print("H0 is rejected")
+
+
+def check_if_better_evolution_on_initial_iterations():
+    print("check_if_better_evolution_on_initial_iterations")
+    for file in os.listdir():
+        parts = file.split("-")
+        if parts[1] == "integrals":
+            learner_name = parts[-1].split(".")[0]
+            csv = pandas.read_csv(file)
+            colored_text = colored("Testing if first 25%% iterations present better progress than last 25%% iterations for learner: %s" % learner_name, 'blue')
+            print(colored_text)
+            if my_shapiro(csv["First 25"]) and my_shapiro(csv["Last 25"]):
+                if t_test(csv["First 25"], csv["Last 25"], alternative='greater', equal_var=my_bartlett(csv["First 25"], csv["Last 25"])):
+                    print("H0 is retained")
+                else:
+                    print("H0 is rejected")
+            else:
+                if t_test(csv["First 25"], csv["Last 25"], alternative='greater', equal_var=my_bartlett(csv["First 25"], csv["Last 25"])):
+                    print("H0 is retained")
+                else:
+                    print("H0 is rejected")
+                colored_text = colored("Failed to perform test", 'yellow')
+                print(colored_text)
+
+            colored_text = colored("Testing if first 50%% iterations present better progress than last 50%% iterations for learner: %s" % learner_name, 'blue')
+            print(colored_text)
+            if my_shapiro(csv["First 50"]) and my_shapiro(csv["Last 50"]):
+                if t_test(csv["First 50"], csv["Last 50"], alternative='greater', equal_var=my_bartlett(csv["First 50"], csv["Last 50"])):
+                    print("H0 is retained")
+                else:
+                    print("H0 is rejected")
+            else:
+                colored_text = colored("Failed to perform test", 'yellow')
+                print(colored_text)
+
+
+def t_test(x, y, alternative='both-sided', equal_var=True):
+    statistic, double_p = ttest_ind(x, y, equal_var=equal_var)
+    if equal_var:
+        sd = np.sqrt((len(x) - 1) * np.var(x) + (len(y) - 1) * np.var(y))
+        effect_size = abs((np.mean(y) - np.mean(x)) / sd)
+    else:
+        effect_size = abs((np.mean(y) - np.mean(x)) / np.std(y))
+
+    if alternative == 'both-sided':
+        pval = double_p
+    elif alternative == 'greater':
+        if np.mean(x) > np.mean(y):
+            pval = double_p / 2.
+        else:
+            pval = 1.0 - double_p / 2.
+    elif alternative == 'less':
+        if np.mean(x) < np.mean(y):
+            pval = double_p / 2.
+        else:
+            pval = 1.0 - double_p / 2.
+    else:
+        pval = None
+    if pval > 0.05:
+        colored_text = colored("T test statistic: %f\tpvalue: %f\teffect size: %f" % (statistic, pval, effect_size), 'red')
+        print(colored_text)
+        return False
+    else:
+        colored_text = colored("T test statistic: %f\tpvalue: %f\teffect size: %f" % (statistic, pval, effect_size), 'green')
+        print(colored_text)
+        return True
+
+
+def my_bartlett(array1, array2):
+    statistic, pvalue = bartlett(array1, array2)
+    if pvalue > 0.01:
+        print("Bartlett test statistic: %f\tpvalue: %f\tEqual variance: True" % (statistic, pvalue))
+        return True
+    else:
+        colored_text = colored("Bartlett test statistic: %f\tpvalue: %f\tEqual variance: False" % (statistic, pvalue), 'red')
+        print(colored_text)
+        return False
+
+
+def my_shapiro(array):
+    statistic, pvalue = shapiro(array)
+    if pvalue > 0.01:
+        print("Shapiro test statistic: %f\tpvalue: %f\tIs normal: True" % (statistic, pvalue))
+        return True
+    else:
+        colored_text = colored("Shapiro test statistic: %f\tpvalue: %f\tIs normal: False" % (statistic, pvalue), 'red')
+        print(colored_text)
+        return False
+
+
+def two_way_anova(input_variable, output_variable):
+    # interaction plot
+    data = {
+        "learner": [],
+        input_variable: [],
+        output_variable: []
+    }
+    for file in os.listdir():
+        parts = file.split("-")
+        if parts[1] == "integrals":
+            csv = pandas.read_csv(file)
+            learner_name = insert_newlines(parts[-1].split(".")[0], every=16)
+            for stat in ["First 25", "First 50", "Last 25", "Last 50"]:  # ["First 10", "First 25", "First 50", "100", "Last 10", "Last 25", "Last 50"]
+                length = len(csv[stat])
+                data["learner"].extend([learner_name] * length)
+                data[input_variable].extend([stat] * length)
+                data[output_variable].extend(csv[stat])
+                statistic, pvalue = shapiro(csv[stat])
+                if pvalue > 0.01:
+                    print("Distribution of %s for %s with %s = %s:\n\tShapiro test statistic: %f\n\tpvalue: %f\n\tIs normal: True" % (stat, output_variable, input_variable, stat, statistic, pvalue))
+                else:
+                    colored_text = colored("Distribution of %s for %s with %s = %s:\n\tShapiro test statistic: %f\n\tpvalue: %f\n\tIs normal: False" % (stat, output_variable, input_variable, stat, statistic, pvalue), 'red')
+                    print(colored_text)
+
+    data = pandas.DataFrame(data)
+    fig = interaction_plot(data["learner"], data[input_variable], data[output_variable])
+    plt.xticks(rotation=90)
+    plt.title("Interaction of %s and algorithms on %s" % (input_variable, output_variable))
+    plt.tight_layout()
+    fig.show()
+
+    formula = '%s ~ C(learner) + C(%s) + C(learner):C(%s)' % (output_variable, input_variable, input_variable)
+    model = ols(formula, data).fit()
+    aov_table = anova_lm(model, typ=2)
+    omega_squared(aov_table)
+    eta_squared(aov_table)
+
+    pandas.set_option('display.max_columns', None)
+    pandas.set_option('display.width', 200)
+    print(aov_table)
+
+    if aov_table["PR(>F)"][0] > 0.05:
+        print("\nNo difference in means due to algorithm")
+    else:
+        print("\nDifference in means due to algorithm")
+    if aov_table["PR(>F)"][1] > 0.05:
+        print("No difference in means due to %s" % input_variable)
+    else:
+        print("Difference in means due to %s" % input_variable)
+    if aov_table["PR(>F)"][2] > 0.05:
+        print("No algorithm and %s interaction" % input_variable)
+    else:
+        print("Significant algorithm and %s interaction" % input_variable)
+
+
+def omega_squared(aov):
+    mse = aov['sum_sq'][-1] / aov['df'][-1]
+    aov['omega_sq'] = 'NaN'
+    aov['omega_sq'] = (aov[:-1]['sum_sq'] - (aov[:-1]['df'] * mse)) / (sum(aov['sum_sq']) + mse)
+    return aov
+
+
+def eta_squared(aov):
+    aov['eta_sq'] = 'NaN'
+    aov['eta_sq'] = aov[:-1]['sum_sq'] / sum(aov['sum_sq'])
+    return aov
 
 
 def insert_newlines(string, every=64):

@@ -91,6 +91,12 @@ def run_active_learning(args, al_iterations, verbose=False, partition=(0.4, 0.6)
         )
         learner_list.append(learner)
         learner.name = str(algo)
+    learner_list[0].name = "SVC_poly"
+    learner_list[1].name = "RandomForestClassifier"
+    learner_list[2].name = "SVC_rbf"
+    learner_list[3].name = "GaussianPC"
+    learner_list[4].name = "GaussianNB"
+    learner_list[5].name = "MLPClassifier"
 
     learner_list_us = deepcopy(learner_list)
     learner_list_d = deepcopy(learner_list)
@@ -144,18 +150,18 @@ def run_active_learning(args, al_iterations, verbose=False, partition=(0.4, 0.6)
             print('Average precision score, micro-averaged over all classes: {0:0.2f}'.format(average_precision["micro"]))
             plt.xlabel('False positive')
             plt.ylabel('True positive')
-            plt.title('ROC curve ' + str(algo))
+            plt.title('ROC curve ' + algo.name)
             plt.legend()
-            plt.savefig('plots/ROC_curve_%s.png' % str(algo).split("(")[0])
+            plt.savefig('plots/ROC_curve_%s.png' % algo.name)
             plt.show()
 
             plt.figure()
             plt.plot(recall["micro"], precision["micro"], lw=2, label='Average precision score, micro-averaged over all classes: {0:0.2f}'.format(average_precision["micro"]))
-            plt.title('Precision score ' + str(algo))
+            plt.title('Precision score ' + algo.name)
             plt.xlabel('Recall')
             plt.ylabel('Precision')
             plt.legend()
-            plt.savefig('plots/Precision_Recall_%s.png' % str(algo).split("(")[0])
+            plt.savefig('plots/Precision_Recall_%s.png' % algo.name)
             plt.show()
 
     if do_evaluation:

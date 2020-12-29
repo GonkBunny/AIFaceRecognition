@@ -42,7 +42,7 @@ def get_args():
     return args
 
 
-def run_active_learning(args, al_iterations, verbose=False, partition=(0.4, 0.6), do_plots=False, do_evaluation=False):
+def run_active_learning(args, al_iterations, verbose=False, partition=(0.4, 0.6), do_plots=False, do_evaluation=True):
     if sum(partition) != 1:
         print("WRONG PARTITIONING")
         return
@@ -110,8 +110,7 @@ def run_active_learning(args, al_iterations, verbose=False, partition=(0.4, 0.6)
     for learner in evaluation_list:
         al_iterations[learner.name] = []
 
-    evaluation_list = deepcopy(alg_list)
-    evaluation_list = deepcopy(learner_list)
+    
 
     def evaluation():
 
@@ -144,18 +143,18 @@ def run_active_learning(args, al_iterations, verbose=False, partition=(0.4, 0.6)
             print('Average precision score, micro-averaged over all classes: {0:0.2f}'.format(average_precision["micro"]))
             plt.xlabel('False positive')
             plt.ylabel('True positive')
-            plt.title('ROC curve ' + str(algo))
+            plt.title('ROC curve ' + str(algo.name))
             plt.legend()
-            plt.savefig('plots/ROC_curve_%s.png' % str(algo).split("(")[0])
+            plt.savefig('plots/ROC_curve_%s.png' % str(algo.name).split("(")[0])
             plt.show()
 
             plt.figure()
             plt.plot(recall["micro"], precision["micro"], lw=2, label='Average precision score, micro-averaged over all classes: {0:0.2f}'.format(average_precision["micro"]))
-            plt.title('Precision score ' + str(algo))
+            plt.title('Precision score ' + str(algo.name))
             plt.xlabel('Recall')
             plt.ylabel('Precision')
             plt.legend()
-            plt.savefig('plots/Precision_Recall_%s.png' % str(algo).split("(")[0])
+            plt.savefig('plots/Precision_Recall_%s.png' % str(algo.name).split("(")[0])
             plt.show()
 
     if do_evaluation:

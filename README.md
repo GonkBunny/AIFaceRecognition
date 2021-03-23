@@ -16,3 +16,11 @@ To see plots used in the paper
 plot_stats.py
 
 Experiment1.py -e Output\embeddings.pickle -r  Output\recognizer.pickle -l Output\le.pickle
+
+
+
+Dataset -> Package of Packages identifying the person
+Ex:
+Dataset
+|
+|--------Barack Obama-------Obama.png
